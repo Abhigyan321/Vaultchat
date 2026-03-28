@@ -8,7 +8,3 @@
   appId: "1:1096891824340:web:e58bbba3091491c887e341"
   };
   /* ============================================================ */
-
-  const app = initializeApp(firebaseConfig);
-  const db  = getFirestore(app);
-  const rtdb = getDatabase(app);
