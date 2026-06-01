@@ -12,7 +12,6 @@
      with your own project credentials from:
      https://console.firebase.google.com
      ============================================================ -->
-<script src="script.js"></script>     
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import {
@@ -24,15 +23,34 @@
     getDatabase, ref, onValue, onDisconnect, set, remove, serverTimestamp as rtServerTimestamp
   } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-  /* ============================================================
-     YOUR FIREBASE CONFIG — REPLACE THIS BLOCK
-     ============================================================ */
+  // ── Fetch Firebase config from your Render backend ──────────
+  const CONFIG_URL = "https://your-render-service.onrender.com/api/firebase-config";
+  // ^^^^^ Replace with your actual Render service URL
 
-  const app = initializeApp(firebaseConfig);
-  const db  = getFirestore(app);
-  const rtdb = getDatabase(app);
+  let db, rtdb;
 
+  async function initFirebase() {
+    try {
+      const res = await fetch(CONFIG_URL);
+      if (!res.ok) throw new Error("Failed to fetch config: " + res.status);
+      const firebaseConfig = await res.json();
 
+      const app = initializeApp(firebaseConfig);
+      db   = getFirestore(app);
+      rtdb = getDatabase(app);
+    } catch (e) {
+      console.error("Firebase init failed:", e);
+      alert("Could not connect to VaultChat services. Please try again later.");
+    }
+  }
+
+  // Initialise immediately — all Firebase calls below will work
+  // because they only execute after user interaction (which is after await)
+  await initFirebase();
+
+  // ... rest of your existing JS code unchanged from here ...
+
+  
   // ── Simple hash (SHA-256 via SubtleCrypto) ──────────────────
   async function hashPassword(password) {
     const encoder = new TextEncoder();
@@ -125,7 +143,7 @@
 
       currentRoomId   = roomId;
       currentUsername = username;
-      enterChatRoom(new Date());
+      enterChatRoom();
     } catch (e) {
       setErr(errEl, "Failed to create room: " + e.message);
     } finally {
@@ -158,25 +176,21 @@
 
       currentRoomId   = roomId;
       currentUsername = username;
-      const createdAt = roomSnap.data().createdAt ? roomSnap.data().createdAt.toDate() : new Date();
-      enterChatRoom(createdAt);
+      enterChatRoom();
     } catch (e) {
       setErr(errEl, "Failed to join room: " + e.message);
     } finally {
       setLoading("btn-join", false);
     }
   };
-  // ── ENTER CHAT ROOM ──────────────────────────────────────────
-  let roomCreatedAt = null;
 
-  function enterChatRoom(createdAt) {
-    roomCreatedAt = createdAt || null;
-    document.getElementById("chat-room-id-text").textContent = currentRoomId;
+  // ── ENTER CHAT ROOM ──────────────────────────────────────────
+  function enterChatRoom() {
+    document.getElementById("chat-room-id").textContent   = currentRoomId;
     document.getElementById("chat-username").textContent  = currentUsername;
     showPage("page-chat");
     setupPresence();
     listenMessages();
-    setupScrollBtn();
   }
 
   // ── PRESENCE (Realtime DB) ───────────────────────────────────
@@ -186,7 +200,6 @@
 
     set(presenceRef, { username: currentUsername, joinedAt: rtServerTimestamp() });
     onDisconnect(presenceRef).remove();
-    postJoinMessage(currentUsername);
 
     const roomPresenceRef = ref(rtdb, `presence/${currentRoomId}`);
     unsubPresence = onValue(roomPresenceRef, snapshot => {
@@ -204,35 +217,17 @@
   }
 
   // ── LISTEN TO MESSAGES (Firestore) ──────────────────────────
-  let firstLoad = true;
   function listenMessages() {
-    firstLoad = true;
     const msgQuery = query(
       collection(db, "rooms", currentRoomId, "messages"),
       orderBy("timestamp", "asc")
     );
     unsubMessages = onSnapshot(msgQuery, snapshot => {
-      if (firstLoad) {
-        // Show "Room Created" system message once at top
-        renderMessage({ system: true, text: "Secure room established — messages are ephemeral" });
-        firstLoad = false;
-      }
       snapshot.docChanges().forEach(change => {
         if (change.type === "added") renderMessage(change.doc.data());
       });
       scrollChat();
     });
-  }
-
-  // ── POST JOIN SYSTEM MESSAGE ─────────────────────────────────
-  async function postJoinMessage(username) {
-    try {
-      await addDoc(collection(db, "rooms", currentRoomId, "messages"), {
-        text:      `${username} joined the room`,
-        system:    true,
-        timestamp: serverTimestamp()
-      });
-    } catch (e) { /* silent */ }
   }
 
   // ── SEND MESSAGE ─────────────────────────────────────────────
@@ -264,21 +259,6 @@
   // ── RENDER MESSAGE ───────────────────────────────────────────
   function renderMessage(data) {
     const feed   = document.getElementById("msg-feed");
-
-    // Hide empty state
-    const empty = document.getElementById("empty-state");
-    if (empty) empty.style.display = "none";
-
-    // System message
-    if (data.system) {
-      const sys = document.createElement("div");
-      sys.className = "msg-system";
-      sys.textContent = data.text;
-      feed.appendChild(sys);
-      scrollChat();
-      return;
-    }
-
     const isMine = data.username === currentUsername;
 
     const wrap = document.createElement("div");
@@ -292,28 +272,6 @@
     bubble.className = "msg-bubble";
     bubble.textContent = data.text;
 
-    // Copy on right-click
-    bubble.addEventListener("contextmenu", async (e) => {
-      e.preventDefault();
-      try {
-        await navigator.clipboard.writeText(data.text);
-        showToast("Message copied.");
-      } catch { showToast("Could not copy."); }
-    });
-
-    // Copy on long-press (mobile)
-    let pressTimer;
-    bubble.addEventListener("touchstart", () => {
-      pressTimer = setTimeout(async () => {
-        try {
-          await navigator.clipboard.writeText(data.text);
-          showToast("Message copied.");
-        } catch { showToast("Could not copy."); }
-      }, 600);
-    });
-    bubble.addEventListener("touchend", () => clearTimeout(pressTimer));
-    bubble.addEventListener("touchmove", () => clearTimeout(pressTimer));
-
     wrap.appendChild(label);
     wrap.appendChild(bubble);
     feed.appendChild(wrap);
@@ -323,25 +281,7 @@
   function scrollChat() {
     const feed = document.getElementById("msg-feed");
     feed.scrollTop = feed.scrollHeight;
-    const btn = document.getElementById("scroll-btn");
-    if (btn) btn.classList.remove("visible");
   }
-
-  // Show scroll-to-bottom button when user scrolls up
-  function setupScrollBtn() {
-    const feed = document.getElementById("msg-feed");
-    const btn  = document.getElementById("scroll-btn");
-    if (!feed || !btn) return;
-    feed.addEventListener("scroll", () => {
-      const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80;
-      btn.classList.toggle("visible", !atBottom);
-    });
-  }
-
-  window.scrollToBottom = function () {
-    const feed = document.getElementById("msg-feed");
-    feed.scrollTo({ top: feed.scrollHeight, behavior: "smooth" });
-  };
 
   // ── SHARE / COPY ROOM ID ─────────────────────────────────────
   window.shareRoom = async function () {
@@ -383,18 +323,6 @@
     } catch (e) { console.error("Room deletion error:", e); }
   }
 
-  // ── ROOM INFO PANEL ──────────────────────────────────────────
-  window.toggleRoomInfo = function () {
-    const panel = document.getElementById("room-info-panel");
-    panel.classList.toggle("open");
-    if (panel.classList.contains("open")) {
-      document.getElementById("info-room-id").textContent   = currentRoomId;
-      document.getElementById("info-user-count").textContent = document.getElementById("user-count").textContent;
-      document.getElementById("info-created").textContent   =
-        roomCreatedAt ? roomCreatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
-    }
-  };
-
   // ── LEAVE ROOM ───────────────────────────────────────────────
   window.leaveRoom = async function () {
     if (unsubMessages) unsubMessages();
@@ -402,20 +330,14 @@
     if (presenceRef)   await remove(presenceRef);
     clearTimeout(inactivityTimer);
 
-    // Close info panel if open
-    const panel = document.getElementById("room-info-panel");
-    if (panel) panel.classList.remove("open");
-
     // Clear chat UI
     document.getElementById("msg-feed").innerHTML = "";
-    document.getElementById("chat-room-id-text").textContent = "";
+    document.getElementById("chat-room-id").textContent  = "";
     document.getElementById("chat-username").textContent = "";
     document.getElementById("user-count").textContent    = "0";
-    firstLoad = true;
 
     currentRoomId   = null;
     currentUsername = null;
-    roomCreatedAt   = null;
 
     showPage("page-landing");
   };
@@ -447,6 +369,7 @@
     document.querySelectorAll("button[id]").forEach(b => b.dataset.label = b.textContent);
   });
 </script>
+
 <style>
 /* ============================================================
    CSS RESET & VARIABLES
@@ -714,16 +637,6 @@ html, body {
   color: var(--accent);
   font-family: var(--font-mono);
 }
-.logo-tagline::after {
-  content: "|";
-  margin-left: 3px;
-  animation: blink 1.1s step-start infinite;
-  color: var(--accent2);
-}
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
 
 .hero-headline {
   font-family: var(--font-head);
@@ -802,6 +715,7 @@ html, body {
   color: var(--text-3);
   letter-spacing: 0.06em;
 }
+
 /* ============================================================
    2. SHIELD ANIMATION PAGE
    ============================================================ */
@@ -982,7 +896,6 @@ html, body {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
-  position: relative;
 }
 
 /* Topbar */
@@ -1021,92 +934,8 @@ html, body {
   letter-spacing: 0.1em;
   cursor: pointer;
   transition: color 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 7px;
 }
 .topbar-room-id:hover { color: var(--accent2); }
-.topbar-room-id:hover .copy-icon { opacity: 1; }
-.copy-icon {
-  opacity: 0.35;
-  transition: opacity 0.2s;
-  flex-shrink: 0;
-}
-
-/* Scroll to bottom button */
-#scroll-btn {
-  position: absolute;
-  bottom: 80px;
-  right: 20px;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-glow);
-  color: var(--accent);
-  cursor: pointer;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  box-shadow: var(--glow-sm);
-  z-index: 20;
-  transition: all 0.2s;
-}
-#scroll-btn.visible { display: flex; }
-#scroll-btn:hover { background: rgba(0,180,255,0.12); transform: translateY(-2px); }
-
-/* Room info panel */
-#room-info-panel {
-  position: absolute;
-  top: 62px;
-  left: 0;
-  right: 0;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border-glow);
-  padding: 16px 20px;
-  z-index: 9;
-  display: none;
-  flex-direction: column;
-  gap: 10px;
-  animation: slideDown 0.22s ease-out both;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-}
-#room-info-panel.open { display: flex; }
-@keyframes slideDown {
-  from { opacity: 0; transform: translateY(-8px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.room-info-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 12px;
-}
-.room-info-key {
-  color: var(--text-3);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  font-size: 10px;
-}
-.room-info-val {
-  color: var(--text-1);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-/* System messages */
-.msg-system {
-  align-self: center;
-  font-size: 11px;
-  color: var(--text-3);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  background: rgba(0,180,255,0.04);
-  border: 1px solid rgba(0,180,255,0.1);
-  border-radius: 20px;
-  padding: 5px 14px;
-  animation: msgIn 0.25s ease-out both;
-}
 
 .topbar-center {
   display: flex;
@@ -1245,9 +1074,7 @@ html, body {
   background: var(--their-bg);
   border: 1px solid var(--their-border);
   border-bottom-left-radius: 4px;
-  border-left: 2px solid rgba(0, 180, 255, 0.45);
-  box-shadow: -2px 0 12px rgba(0, 180, 255, 0.08);
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text-2);
 }
 
 /* Input bar */
@@ -1329,6 +1156,7 @@ html, body {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+
 /* ============================================================
    RESPONSIVE
    ============================================================ */
@@ -1397,7 +1225,7 @@ html, body {
     <div class="feature-grid">
       <div class="feature-card">
         <div class="feature-title">End-to-End Protected</div>
-        <div class="feature-desc">All rooms are password-protected with hashed credentials stored securely.</div>
+        <div class="feature-desc">All rooms are password-protected with hashed credentials stored securely in Firebase.</div>
       </div>
       <div class="feature-card">
         <div class="feature-title">Private Rooms</div>
@@ -1409,7 +1237,7 @@ html, body {
       </div>
       <div class="feature-card">
         <div class="feature-title">Real-Time Presence</div>
-        <div class="feature-desc">Live user count and instant message delivery.</div>
+        <div class="feature-desc">Live user count and instant message delivery powered by Firebase Realtime Database and Firestore.</div>
       </div>
     </div>
 
@@ -1587,12 +1415,7 @@ html, body {
   <div class="chat-topbar">
     <div class="topbar-left">
       <div class="topbar-room-label">Active Room</div>
-      <div class="topbar-room-id" id="chat-room-id" onclick="copyRoomId()" title="Click to copy Room ID">
-        <span id="chat-room-id-text"></span>
-        <svg class="copy-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-        </svg>
-      </div>
+      <div class="topbar-room-id" id="chat-room-id" onclick="copyRoomId()" title="Click to copy Room ID"></div>
     </div>
 
     <div class="topbar-center">
@@ -1601,12 +1424,6 @@ html, body {
     </div>
 
     <div class="topbar-right">
-      <!-- Room info button -->
-      <button class="icon-btn" onclick="toggleRoomInfo()" title="Room Info">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-        </svg>
-      </button>
       <!-- Share button -->
       <button class="icon-btn" onclick="shareRoom()" title="Share Room">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -1621,26 +1438,6 @@ html, body {
     </div>
   </div>
 
-  <!-- Room info panel (slides down) -->
-  <div id="room-info-panel">
-    <div class="room-info-row">
-      <span class="room-info-key">Room ID</span>
-      <span class="room-info-val" id="info-room-id"></span>
-    </div>
-    <div class="room-info-row">
-      <span class="room-info-key">Participants Online</span>
-      <span class="room-info-val" id="info-user-count"></span>
-    </div>
-    <div class="room-info-row">
-      <span class="room-info-key">Session Started</span>
-      <span class="room-info-val" id="info-created"></span>
-    </div>
-    <div class="room-info-row">
-      <span class="room-info-key">Auto-Delete</span>
-      <span class="room-info-val" style="color:var(--accent2);">3 min after last user leaves</span>
-    </div>
-  </div>
-
   <!-- User strip -->
   <div class="chat-user-strip">
     Connected as <span id="chat-username"></span>
@@ -1650,13 +1447,6 @@ html, body {
   <div id="msg-feed" class="msg-feed">
     <div class="msg-feed-empty" id="empty-state">No messages yet &mdash; say something</div>
   </div>
-
-  <!-- Scroll to bottom button -->
-  <button id="scroll-btn" onclick="scrollToBottom()" title="Scroll to bottom">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-      <polyline points="6 9 12 15 18 9"/>
-    </svg>
-  </button>
 
   <!-- Input bar -->
   <div class="chat-input-bar">
@@ -1668,6 +1458,7 @@ html, body {
       placeholder="Type a message..."
       autocomplete="off"
       onkeydown="handleMsgKey(event)"
+      oninput="document.getElementById('empty-state') && (document.getElementById('empty-state').style.display='none')"
     />
     <button class="send-btn" onclick="sendMessage()" title="Send">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
@@ -1679,3 +1470,10 @@ html, body {
 
 </body>
 </html>
+
+
+
+
+<!-- room- 5BTCXDZZ  pass- rahulok  -->
+
+
