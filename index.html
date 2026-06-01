@@ -92,19 +92,24 @@
   }
 
   // ── LANDING → SHIELD ANIMATION → ACCESS SELECTION ──────────
-  window.startApp = function () {
-    showPage("page-shield");
-    const shield = document.getElementById("shield-svg");
-    shield.classList.remove("animate");
-    void shield.offsetWidth;
-    shield.classList.add("animate");
-    setTimeout(() => showPage("page-access"), 2800);
-  };
+  let shieldTimer = null;
+
+window.startApp = function () {
+  showPage("page-shield");
+  const shield = document.getElementById("shield-svg");
+  shield.classList.remove("animate");
+  void shield.offsetWidth;
+  shield.classList.add("animate");
+  shieldTimer = setTimeout(() => showPage("page-access"), 2800);
+};
 
   // ── ACCESS SELECTION ────────────────────────────────────────
   window.goAdmin = function () { showPage("page-admin"); };
   window.goJoin  = function () { showPage("page-join");  };
-  window.goBack  = function (target) { showPage(target || "page-access"); };
+  window.goBack = function (target) {
+  if (shieldTimer) { clearTimeout(shieldTimer); shieldTimer = null; }
+  showPage(target || "page-access");
+};
 
   // ── GENERATE ROOM ID ────────────────────────────────────────
   window.generateId = function () {
@@ -1311,7 +1316,7 @@ html, body {
       </button>
     </div>
 
-    <button class="back-link" onclick="showPage('page-landing')" style="align-self:center;margin-top:8px;">
+    <button class="back-link" onclick="goBack('page-landing')" style="align-self:center;margin-top:8px;">
       &larr; Back to Home
     </button>
   </div>
