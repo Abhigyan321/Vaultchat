@@ -1163,6 +1163,80 @@ html, body {
 }
 
 /* ============================================================
+   CREDITS FOOTER
+   ============================================================ */
+.credits-footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  padding: 10px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: linear-gradient(to top, rgba(8,12,16,0.98) 60%, transparent);
+  pointer-events: none;
+}
+
+.credits-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 40px;
+  padding: 7px 20px;
+  pointer-events: all;
+  transition: border-color 0.25s, background 0.25s;
+}
+.credits-inner:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.credits-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent2);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.credits-text {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+  white-space: nowrap;
+}
+
+.credits-text .credits-name {
+  color: #ffffff;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.credits-divider {
+  color: rgba(255, 255, 255, 0.15);
+  font-size: 10px;
+}
+
+/* Hide credits inside chat room (has its own bottom bar) */
+#page-chat.active ~ .credits-footer,
+body:has(#page-chat.active) .credits-footer {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .credits-footer { padding: 8px 12px; }
+  .credits-text { font-size: 10px; }
+}
+
+/* ============================================================
    RESPONSIVE
    ============================================================ */
 @media (max-width: 600px) {
@@ -1470,6 +1544,18 @@ html, body {
         <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
       </svg>
     </button>
+  </div>
+</div>
+
+<div class="credits-footer">
+  <div class="credits-inner">
+    <div class="credits-dot"></div>
+    <span class="credits-text">
+      Built by <span class="credits-name">Abhigyan</span>
+      <span class="credits-divider">&nbsp;/&nbsp;</span>
+      Powered by VaultChat
+    </span>
+    <div class="credits-dot"></div>
   </div>
 </div>
 
