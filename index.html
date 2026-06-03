@@ -78,7 +78,8 @@
   let myPresenceUid       = null;
   let activityTimer       = null;
   const INACTIVITY_MS     = 3 * 60 * 1000;
-  const MY_INACTIVITY_MS  = 5 * 60 * 1000;
+  const OFFLINE_DELAY_MS  = 10 * 1000;
+  const ONLINE_INSTANT    = true;
 
   // ── Page navigation ─────────────────────────────────────────
   function showPage(id) {
@@ -200,7 +201,7 @@
     myPresenceUid = Math.random().toString(36).slice(2);
     presenceRef = ref(rtdb, `presence/${currentRoomId}/${myPresenceUid}`);
 
-    set(presenceRef, { username: currentUsername, joinedAt: rtServerTimestamp(), online: true });
+    set(presenceRef, { username: currentUsername, joinedAt: rtServerTimestamp(), online: true, lastSeen: rtServerTimestamp() });
     onDisconnect(presenceRef).remove();
     postJoinMessage(currentUsername);
     startActivityTracking();
@@ -445,30 +446,49 @@
   }
 
 function startActivityTracking() {
-  const events = ["mousemove", "keydown", "mousedown", "touchstart", "scroll"];
-  events.forEach(evt => window.addEventListener(evt, resetActivityTimer, { passive: true }));
-  resetActivityTimer();
+  const events = ["mousemove", "keydown", "mousedown", "touchstart", "scroll", "click"];
+  events.forEach(evt => window.addEventListener(evt, onUserActivity, { passive: true }));
+
+  // Page visibility: going hidden starts the offline countdown, coming back = instant online
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      scheduleOffline();
+    } else {
+      onUserActivity();
+    }
+  });
+
+  // Initial kick — mark online immediately
+  setMyOnlineStatus(true);
+  resetOfflineCountdown();
 }
 
-function resetActivityTimer() {
-  clearTimeout(activityTimer);
-  // If we were marked offline, reactivate automatically on activity
+function onUserActivity() {
+  // Instant online — no delay
   if (allRoomUsers[currentUsername] && !allRoomUsers[currentUsername].online) {
-    reactivateMyStatus();
+    setMyOnlineStatus(true);
   }
-  activityTimer = setTimeout(markMyselfOffline, MY_INACTIVITY_MS);
+  resetOfflineCountdown();
 }
 
-function markMyselfOffline() {
-  if (!presenceRef) return;
-  set(presenceRef, { username: currentUsername, online: false });
+function resetOfflineCountdown() {
+  clearTimeout(activityTimer);
+  activityTimer = setTimeout(scheduleOffline, OFFLINE_DELAY_MS);
 }
 
-window.reactivateMyStatus = function () {
+function scheduleOffline() {
+  clearTimeout(activityTimer);
+  setMyOnlineStatus(false);
+}
+
+function setMyOnlineStatus(isOnline) {
   if (!presenceRef) return;
-  set(presenceRef, { username: currentUsername, joinedAt: rtServerTimestamp(), online: true });
-  resetActivityTimer();
-};
+  set(presenceRef, {
+    username:  currentUsername,
+    online:    isOnline,
+    lastSeen:  rtServerTimestamp()
+  });
+}
 
   window.scrollToBottom = function () {
     const feed = document.getElementById("msg-feed");
@@ -543,35 +563,6 @@ window.reactivateMyStatus = function () {
       row.appendChild(dot);
       row.appendChild(nameEl);
       row.appendChild(statusEl);
-
-      // Reactivate button — only for current user when they are offline
-      if (name === currentUsername && !info.online) {
-        const reactivateBtn = document.createElement("button");
-        reactivateBtn.textContent = "Reactivate";
-        reactivateBtn.style.cssText = `
-          font-family: var(--font-mono);
-          font-size: 10px;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-          background: transparent;
-          border: 1px solid var(--accent);
-          color: var(--accent);
-          border-radius: 20px;
-          padding: 3px 10px;
-          cursor: pointer;
-          transition: background 0.2s, color 0.2s;
-          flex-shrink: 0;
-        `;
-        reactivateBtn.onmouseover = () => {
-          reactivateBtn.style.background = "rgba(0,180,255,0.15)";
-        };
-        reactivateBtn.onmouseout = () => {
-          reactivateBtn.style.background = "transparent";
-        };
-        reactivateBtn.onclick = () => window.reactivateMyStatus();
-        row.appendChild(reactivateBtn);
-      }
-
       list.appendChild(row);
     });
   }
@@ -595,6 +586,7 @@ window.reactivateMyStatus = function () {
     if (presenceRef)   await remove(presenceRef);
     clearTimeout(inactivityTimer);
     clearTimeout(activityTimer);
+    if (presenceRef) set(presenceRef, { username: currentUsername, online: false, lastSeen: rtServerTimestamp() });
 
     const panel = document.getElementById("room-info-panel");
     if (panel) panel.classList.remove("open");
