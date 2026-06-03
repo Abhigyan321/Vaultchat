@@ -208,27 +208,30 @@
 
     const roomPresenceRef = ref(rtdb, `presence/${currentRoomId}`);
     unsubPresence = onValue(roomPresenceRef, snapshot => {
-      const data  = snapshot.exists() ? snapshot.val() : {};
-      const count = Object.keys(data).length;
-      document.getElementById("user-count").textContent = count;
+      const data = snapshot.exists() ? snapshot.val() : {};
 
-      // Build status from the online field stored in each presence entry
+      // Merge every presence node into allRoomUsers using the online field
       Object.values(data).forEach(u => {
-        if (u.username) {
-          allRoomUsers[u.username] = { online: u.online !== false };
-        }
+        if (!u.username) return;
+        allRoomUsers[u.username] = { online: u.online === true };
       });
 
-      // Mark anyone no longer in presence as offline
-      const presentUsernames = new Set(Object.values(data).map(u => u.username).filter(Boolean));
+      // Anyone no longer in the DB at all → offline
+      const usernamesInDB = new Set(Object.values(data).map(u => u.username).filter(Boolean));
       Object.keys(allRoomUsers).forEach(name => {
-        if (!presentUsernames.has(name)) allRoomUsers[name] = { online: false };
+        if (!usernamesInDB.has(name)) allRoomUsers[name] = { online: false };
       });
+
+      // Count only nodes where online === true
+      const onlineCount = Object.values(data).filter(u => u.online === true).length;
+      document.getElementById("user-count").textContent = onlineCount;
 
       const panel = document.getElementById("room-info-panel");
       if (panel && panel.classList.contains("open")) renderParticipantList();
 
-      if (count === 0) {
+      // Inactivity: fire only when zero nodes exist in DB at all
+      const totalInDB = Object.keys(data).length;
+      if (totalInDB === 0) {
         clearTimeout(inactivityTimer);
         inactivityTimer = setTimeout(() => deleteRoom(currentRoomId), INACTIVITY_MS);
       } else {
@@ -483,11 +486,14 @@ function scheduleOffline() {
 
 function setMyOnlineStatus(isOnline) {
   if (!presenceRef) return;
-  set(presenceRef, {
-    username:  currentUsername,
-    online:    isOnline,
-    lastSeen:  rtServerTimestamp()
-  });
+  const payload = {
+    username: currentUsername,
+    online:   isOnline,
+    lastSeen: rtServerTimestamp()
+  };
+  // Preserve joinedAt so the node always exists in DB
+  if (isOnline) payload.joinedAt = rtServerTimestamp();
+  set(presenceRef, payload);
 }
 
   window.scrollToBottom = function () {
