@@ -71,11 +71,14 @@
   let unsubPresence   = null;
   let inactivityTimer = null;
   let shieldTimer     = null;
-  let replyTo         = null;
-  let allRoomUsers    = {};
-  let roomCreatedAt   = null;
-  let firstLoad       = true;
-  const INACTIVITY_MS = 3 * 60 * 1000;
+  let replyTo             = null;
+  let allRoomUsers        = {};
+  let roomCreatedAt       = null;
+  let firstLoad           = true;
+  let myPresenceUid       = null;
+  let activityTimer       = null;
+  const INACTIVITY_MS     = 3 * 60 * 1000;
+  const MY_INACTIVITY_MS  = 5 * 60 * 1000;
 
   // ── Page navigation ─────────────────────────────────────────
   function showPage(id) {
@@ -194,12 +197,13 @@
 
   // ── PRESENCE (Realtime DB) ───────────────────────────────────
   function setupPresence() {
-    const uid = Math.random().toString(36).slice(2);
-    presenceRef = ref(rtdb, `presence/${currentRoomId}/${uid}`);
+    myPresenceUid = Math.random().toString(36).slice(2);
+    presenceRef = ref(rtdb, `presence/${currentRoomId}/${myPresenceUid}`);
 
-    set(presenceRef, { username: currentUsername, joinedAt: rtServerTimestamp() });
+    set(presenceRef, { username: currentUsername, joinedAt: rtServerTimestamp(), online: true });
     onDisconnect(presenceRef).remove();
     postJoinMessage(currentUsername);
+    startActivityTracking();
 
     const roomPresenceRef = ref(rtdb, `presence/${currentRoomId}`);
     unsubPresence = onValue(roomPresenceRef, snapshot => {
@@ -207,12 +211,17 @@
       const count = Object.keys(data).length;
       document.getElementById("user-count").textContent = count;
 
-      const onlineNow = new Set();
-      Object.values(data).forEach(u => { if (u.username) onlineNow.add(u.username); });
+      // Build status from the online field stored in each presence entry
+      Object.values(data).forEach(u => {
+        if (u.username) {
+          allRoomUsers[u.username] = { online: u.online !== false };
+        }
+      });
 
-      onlineNow.forEach(name => { allRoomUsers[name] = { online: true }; });
+      // Mark anyone no longer in presence as offline
+      const presentUsernames = new Set(Object.values(data).map(u => u.username).filter(Boolean));
       Object.keys(allRoomUsers).forEach(name => {
-        if (!onlineNow.has(name)) allRoomUsers[name] = { online: false };
+        if (!presentUsernames.has(name)) allRoomUsers[name] = { online: false };
       });
 
       const panel = document.getElementById("room-info-panel");
@@ -435,6 +444,32 @@
     });
   }
 
+function startActivityTracking() {
+  const events = ["mousemove", "keydown", "mousedown", "touchstart", "scroll"];
+  events.forEach(evt => window.addEventListener(evt, resetActivityTimer, { passive: true }));
+  resetActivityTimer();
+}
+
+function resetActivityTimer() {
+  clearTimeout(activityTimer);
+  // If we were marked offline, reactivate automatically on activity
+  if (allRoomUsers[currentUsername] && !allRoomUsers[currentUsername].online) {
+    reactivateMyStatus();
+  }
+  activityTimer = setTimeout(markMyselfOffline, MY_INACTIVITY_MS);
+}
+
+function markMyselfOffline() {
+  if (!presenceRef) return;
+  set(presenceRef, { username: currentUsername, online: false });
+}
+
+window.reactivateMyStatus = function () {
+  if (!presenceRef) return;
+  set(presenceRef, { username: currentUsername, joinedAt: rtServerTimestamp(), online: true });
+  resetActivityTimer();
+};
+
   window.scrollToBottom = function () {
     const feed = document.getElementById("msg-feed");
     feed.scrollTo({ top: feed.scrollHeight, behavior: "smooth" });
@@ -508,6 +543,35 @@
       row.appendChild(dot);
       row.appendChild(nameEl);
       row.appendChild(statusEl);
+
+      // Reactivate button — only for current user when they are offline
+      if (name === currentUsername && !info.online) {
+        const reactivateBtn = document.createElement("button");
+        reactivateBtn.textContent = "Reactivate";
+        reactivateBtn.style.cssText = `
+          font-family: var(--font-mono);
+          font-size: 10px;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          background: transparent;
+          border: 1px solid var(--accent);
+          color: var(--accent);
+          border-radius: 20px;
+          padding: 3px 10px;
+          cursor: pointer;
+          transition: background 0.2s, color 0.2s;
+          flex-shrink: 0;
+        `;
+        reactivateBtn.onmouseover = () => {
+          reactivateBtn.style.background = "rgba(0,180,255,0.15)";
+        };
+        reactivateBtn.onmouseout = () => {
+          reactivateBtn.style.background = "transparent";
+        };
+        reactivateBtn.onclick = () => window.reactivateMyStatus();
+        row.appendChild(reactivateBtn);
+      }
+
       list.appendChild(row);
     });
   }
@@ -530,6 +594,7 @@
     if (unsubPresence) unsubPresence();
     if (presenceRef)   await remove(presenceRef);
     clearTimeout(inactivityTimer);
+    clearTimeout(activityTimer);
 
     const panel = document.getElementById("room-info-panel");
     if (panel) panel.classList.remove("open");
@@ -573,6 +638,16 @@
   // ── INIT ─────────────────────────────────────────────────────
   document.addEventListener("DOMContentLoaded", () => {
     document.querySelectorAll("button[id]").forEach(b => b.dataset.label = b.textContent);
+
+    // Click-outside to close room info panel
+    document.addEventListener("click", (e) => {
+      const panel   = document.getElementById("room-info-panel");
+      const infoBtn = document.querySelector('[onclick="toggleRoomInfo()"]');
+      if (!panel || !panel.classList.contains("open")) return;
+      if (panel.contains(e.target)) return;
+      if (infoBtn && infoBtn.contains(e.target)) return;
+      panel.classList.remove("open");
+    });
   });
 </script>
 
