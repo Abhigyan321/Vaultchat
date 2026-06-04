@@ -637,6 +637,27 @@ function setMyOnlineStatus(isOnline) {
   document.addEventListener("DOMContentLoaded", () => {
     document.querySelectorAll("button[id]").forEach(b => b.dataset.label = b.textContent);
 
+    // Close room info panel on any click outside it
+    document.addEventListener("click", (e) => {
+      const panel   = document.getElementById("room-info-panel");
+      const infoBtn = document.querySelector('[onclick="toggleRoomInfo()"]');
+      if (!panel || !panel.classList.contains("open")) return;
+      if (panel.contains(e.target)) return;
+      if (infoBtn && infoBtn.contains(e.target)) return;
+      panel.classList.remove("open");
+    });
+
+    // Close room info panel on any mouseover outside it
+    document.addEventListener("mouseover", (e) => {
+      const panel   = document.getElementById("room-info-panel");
+      const infoBtn = document.querySelector('[onclick="toggleRoomInfo()"]');
+      if (!panel || !panel.classList.contains("open")) return;
+      if (panel.contains(e.target)) return;
+      if (infoBtn && infoBtn.contains(e.target)) return;
+      panel.classList.remove("open");
+    });
+  });
+
     // Click-outside to close room info panel
     document.addEventListener("click", (e) => {
       const panel   = document.getElementById("room-info-panel");
@@ -646,7 +667,6 @@ function setMyOnlineStatus(isOnline) {
       if (infoBtn && infoBtn.contains(e.target)) return;
       panel.classList.remove("open");
     });
-  });
 </script>
 
 <style>
@@ -1105,6 +1125,7 @@ html, body {
   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
 }
 #room-info-panel.open { display: flex; }
+#room-info-panel { transition: opacity 0.18s ease, transform 0.18s ease; }
 @keyframes slideDown {
   from { opacity: 0; transform: translateY(-8px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -1743,3 +1764,7 @@ body:has(#page-chat.active) .credits-footer { display: none; }
 
 </body>
 </html>
+
+
+
+
