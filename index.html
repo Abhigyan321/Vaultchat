@@ -624,14 +624,15 @@ function setMyOnlineStatus(isOnline) {
   const TYPING_TTL_MS  = 3000;  // clear after 3s inactivity
 
   function setupTypingListener() {
+    if (!rtdb || !currentRoomId) return;
     const roomTypingRef = ref(rtdb, `typing/${currentRoomId}`);
     typingUnsubscribe = onValue(roomTypingRef, snapshot => {
       const data = snapshot.exists() ? snapshot.val() : {};
-      const others = Object.values(data).filter(
-        entry => entry.username !== currentUsername
-      );
-      renderTypingIndicator(others.map(e => e.username));
-    });
+      const others = Object.values(data)
+        .filter(entry => entry && entry.username && entry.username !== currentUsername)
+        .map(e => e.username);
+      renderTypingIndicator(others);
+    }, e => console.error("typing listener error:", e));
   }
 
   function renderTypingIndicator(names) {
@@ -658,16 +659,16 @@ function setMyOnlineStatus(isOnline) {
   }
 
   function setTypingStatus(status) {
-    if (!currentRoomId || !currentUsername) return;
-    if (status === isTyping) return;   // no change, skip write
+    if (!currentRoomId || !currentUsername || !rtdb) return;
+    if (status === isTyping) return;
     isTyping  = status;
-    typingRef = ref(rtdb, `typing/${currentRoomId}/${currentUsername}`);
-
+    const tRef = ref(rtdb, `typing/${currentRoomId}/${currentUsername}`);
+    typingRef  = tRef;
     if (status) {
-      set(typingRef, { username: currentUsername });
-      onDisconnect(typingRef).remove();
+      set(tRef, { username: currentUsername }).catch(e => console.error("typing set failed:", e));
+      onDisconnect(tRef).remove();
     } else {
-      remove(typingRef);
+      remove(tRef).catch(e => console.error("typing remove failed:", e));
     }
   }
 
