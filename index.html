@@ -194,6 +194,7 @@
     setupPresence();
     listenMessages();
     setupScrollBtn();
+    setupTypingListener();
   }
 
   // ── PRESENCE (Realtime DB) ───────────────────────────────────
@@ -291,6 +292,8 @@
       msgData.replyTo = { username: replyTo.username, text: replyTo.text };
     }
     clearReply();
+
+    clearTypingStatus();
 
     try {
       await addDoc(collection(db, "rooms", currentRoomId, "messages"), msgData);
@@ -608,9 +611,108 @@ function setMyOnlineStatus(isOnline) {
     roomCreatedAt   = null;
     allRoomUsers    = {};
     replyTo         = null;
+    teardownTyping();
 
     window.location.reload();
   };
+
+// ── TYPING INDICATOR ─────────────────────────────────────────
+  let typingRef        = null;   // ref to this user's typing node in RTDB
+  let typingTimeout    = null;   // inactivity timer
+  let typingUnsubscribe = null;  // RTDB listener unsubscribe
+  let isTyping         = false;  // current local state
+  const TYPING_TTL_MS  = 3000;  // clear after 3s inactivity
+
+  function setupTypingListener() {
+    const roomTypingRef = ref(rtdb, `typing/${currentRoomId}`);
+    typingUnsubscribe = onValue(roomTypingRef, snapshot => {
+      const data = snapshot.exists() ? snapshot.val() : {};
+      const others = Object.values(data).filter(
+        entry => entry.username !== currentUsername
+      );
+      renderTypingIndicator(others.map(e => e.username));
+    });
+  }
+
+  function renderTypingIndicator(names) {
+    const bar     = document.getElementById("typing-indicator-bar");
+    const nameEl  = document.getElementById("typing-names");
+    if (!bar || !nameEl) return;
+
+    if (names.length === 0) {
+      bar.style.display = "none";
+      nameEl.textContent = "";
+      return;
+    }
+
+    let label;
+    if (names.length === 1) {
+      label = `${names[0]} is typing`;
+    } else if (names.length === 2) {
+      label = `${names[0]} and ${names[1]} are typing`;
+    } else {
+      label = `${names[0]} and ${names.length - 1} others are typing`;
+    }
+
+    nameEl.textContent = label;
+    bar.style.display  = "flex";
+  }
+
+  function setTypingStatus(status) {
+    if (!currentRoomId || !currentUsername) return;
+    if (status === isTyping) return;   // no change, skip write
+    isTyping  = status;
+    typingRef = ref(rtdb, `typing/${currentRoomId}/${currentUsername}`);
+
+    if (status) {
+      set(typingRef, { username: currentUsername });
+      onDisconnect(typingRef).remove();
+    } else {
+      remove(typingRef);
+    }
+  }
+
+  // Called on every input event — throttled to 1 write/sec max
+  let lastTypingWrite = 0;
+  window.handleTypingInput = function () {
+    const input = document.getElementById("msg-input");
+    const hasText = input && input.value.length > 0;
+
+    // Always clear the old inactivity timer
+    clearTimeout(typingTimeout);
+
+    if (hasText) {
+      // Throttle: only write to RTDB at most once per second
+      const now = Date.now();
+      if (now - lastTypingWrite > 1000) {
+        lastTypingWrite = now;
+        setTypingStatus(true);
+      }
+      // Schedule auto-clear after inactivity
+      typingTimeout = setTimeout(() => setTypingStatus(false), TYPING_TTL_MS);
+    } else {
+      // Input is empty (deleted all text) — still show typing per spec
+      const now = Date.now();
+      if (now - lastTypingWrite > 1000) {
+        lastTypingWrite = now;
+        setTypingStatus(true);
+      }
+      typingTimeout = setTimeout(() => setTypingStatus(false), TYPING_TTL_MS);
+    }
+  };
+
+  function clearTypingStatus() {
+    clearTimeout(typingTimeout);
+    setTypingStatus(false);
+    isTyping = false;
+    lastTypingWrite = 0;
+  }
+
+  function teardownTyping() {
+    clearTypingStatus();
+    if (typingUnsubscribe) { typingUnsubscribe(); typingUnsubscribe = null; }
+    typingRef = null;
+  }
 
   // ── HELPERS ──────────────────────────────────────────────────
   function setErr(el, msg) {
@@ -1437,6 +1539,48 @@ html, body {
 .credits-divider { color: rgba(255, 255, 255, 0.15); font-size: 10px; }
 body:has(#page-chat.active) .credits-footer { display: none; }
 
+/* TYPING INDICATOR */
+.typing-indicator-bar {
+  padding: 6px 20px;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  background: transparent;
+}
+
+.typing-names {
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+}
+
+.typing-dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.typing-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-3);
+  display: inline-block;
+  animation: none;
+}
+
+.typing-dots.active span:nth-child(1) { animation: typingBounce 1.2s ease-in-out infinite 0s; }
+.typing-dots.active span:nth-child(2) { animation: typingBounce 1.2s ease-in-out infinite 0.2s; }
+.typing-dots.active span:nth-child(3) { animation: typingBounce 1.2s ease-in-out infinite 0.4s; }
+
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); background: var(--text-3); }
+  30% { transform: translateY(-5px); background: var(--accent); }
+}
+
 /* RESPONSIVE */
 @media (max-width: 600px) {
   .feature-grid { grid-template-columns: 1fr; }
@@ -1719,6 +1863,14 @@ body:has(#page-chat.active) .credits-footer { display: none; }
     </svg>
   </button>
 
+<!-- Typing indicator -->
+  <div class="typing-indicator-bar" id="typing-indicator-bar" style="display:none;">
+    <span class="typing-names" id="typing-names"></span>
+    <div class="typing-dots active" id="typing-dots">
+      <span></span><span></span><span></span>
+    </div>
+  </div>
+
   <div id="reply-bar">
     <div class="reply-bar-indicator"></div>
     <div class="reply-bar-content">
@@ -1741,6 +1893,7 @@ body:has(#page-chat.active) .credits-footer { display: none; }
       placeholder="Type a message..."
       autocomplete="off"
       onkeydown="handleMsgKey(event)"
+      oninput="handleTypingInput()"
     />
     <button class="send-btn" onclick="sendMessage()" title="Send">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
