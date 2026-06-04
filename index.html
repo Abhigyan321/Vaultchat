@@ -635,27 +635,26 @@ function setMyOnlineStatus(isOnline) {
   }
 
   function renderTypingIndicator(names) {
-    const bar     = document.getElementById("typing-indicator-bar");
-    const nameEl  = document.getElementById("typing-names");
-    if (!bar || !nameEl) return;
+    const bar    = document.getElementById("typing-indicator-bar");
+    const nameEl = document.getElementById("typing-names");
+    const dots   = document.getElementById("typing-dots");
+    if (!bar || !nameEl || !dots) return;
 
     if (names.length === 0) {
-      bar.style.display = "none";
       nameEl.textContent = "";
+      dots.classList.remove("active");
+      bar.style.visibility = "hidden";
       return;
     }
 
     let label;
-    if (names.length === 1) {
-      label = `${names[0]} is typing`;
-    } else if (names.length === 2) {
-      label = `${names[0]} and ${names[1]} are typing`;
-    } else {
-      label = `${names[0]} and ${names.length - 1} others are typing`;
-    }
+    if (names.length === 1)      label = `${names[0]} is typing`;
+    else if (names.length === 2) label = `${names[0]} and ${names[1]} are typing`;
+    else                         label = `${names[0]} and ${names.length - 1} others are typing`;
 
     nameEl.textContent = label;
-    bar.style.display  = "flex";
+    dots.classList.add("active");
+    bar.style.visibility = "visible";
   }
 
   function setTypingStatus(status) {
@@ -672,32 +671,22 @@ function setMyOnlineStatus(isOnline) {
     }
   }
 
-  // Called on every input event — throttled to 1 write/sec max
   let lastTypingWrite = 0;
   window.handleTypingInput = function () {
     const input = document.getElementById("msg-input");
-    const hasText = input && input.value.length > 0;
+    if (!input) return;
 
-    // Always clear the old inactivity timer
     clearTimeout(typingTimeout);
 
-    if (hasText) {
-      // Throttle: only write to RTDB at most once per second
+    if (input.value.length > 0) {
       const now = Date.now();
       if (now - lastTypingWrite > 1000) {
         lastTypingWrite = now;
         setTypingStatus(true);
       }
-      // Schedule auto-clear after inactivity
       typingTimeout = setTimeout(() => setTypingStatus(false), TYPING_TTL_MS);
     } else {
-      // Input is empty (deleted all text) — still show typing per spec
-      const now = Date.now();
-      if (now - lastTypingWrite > 1000) {
-        lastTypingWrite = now;
-        setTypingStatus(true);
-      }
-      typingTimeout = setTimeout(() => setTypingStatus(false), TYPING_TTL_MS);
+      setTypingStatus(false);
     }
   };
 
@@ -1541,13 +1530,14 @@ body:has(#page-chat.active) .credits-footer { display: none; }
 
 /* TYPING INDICATOR */
 .typing-indicator-bar {
-  padding: 6px 20px;
-  min-height: 28px;
+  padding: 4px 20px;
+  height: 28px;
   display: flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
   background: transparent;
+  visibility: hidden;
 }
 
 .typing-names {
@@ -1864,9 +1854,9 @@ body:has(#page-chat.active) .credits-footer { display: none; }
   </button>
 
 <!-- Typing indicator -->
-  <div class="typing-indicator-bar" id="typing-indicator-bar" style="display:none;">
+  <div class="typing-indicator-bar" id="typing-indicator-bar">
     <span class="typing-names" id="typing-names"></span>
-    <div class="typing-dots active" id="typing-dots">
+    <div class="typing-dots" id="typing-dots">
       <span></span><span></span><span></span>
     </div>
   </div>
