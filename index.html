@@ -195,6 +195,7 @@
     listenMessages();
     setupScrollBtn();
     setupTypingListener();
+    setupPinnedListener();
   }
 
   // ── PRESENCE (Realtime DB) ───────────────────────────────────
@@ -267,7 +268,11 @@
         firstLoad = false;
       }
       snapshot.docChanges().forEach(change => {
-        if (change.type === "added") renderMessage(change.doc.data());
+        if (change.type === "added") {
+          const d = change.doc.data();
+          d.msgId = change.doc.id;
+          renderMessage(d);
+        }
       });
       scrollChat();
     });
@@ -356,6 +361,7 @@
     // ── Wrapper ─────────────────────────────────────────────
     const wrap = document.createElement("div");
     wrap.className = `msg-wrap ${isMine ? "mine" : "theirs"}`;
+    if (data.msgId) wrap.id = `msg-${data.msgId}`;
 
     // ── Name + time row ─────────────────────────────────────
     const meta = document.createElement("div");
@@ -418,15 +424,23 @@
     replyBtn.title = "Reply";
     replyBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>`;
     replyBtn.onclick = () => window.setReply(data.username, data.text);
+    
+    const pinBtn = document.createElement("button");
+    pinBtn.className = "msg-pin-btn";
+    pinBtn.title = "Pin message";
+    pinBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v7"/><path d="M5 9h14"/><path d="M9 9v5a3 3 0 0 0 6 0V9"/><line x1="12" y1="16" x2="12" y2="22"/></svg>`;
+    pinBtn.onclick = () => window.pinMessage(data.msgId || "", data.text, data.username);
 
     const bubbleRow = document.createElement("div");
     bubbleRow.className = "msg-bubble-row";
     if (isMine) {
+      bubbleRow.appendChild(pinBtn);
       bubbleRow.appendChild(replyBtn);
       bubbleRow.appendChild(bubble);
     } else {
       bubbleRow.appendChild(bubble);
       bubbleRow.appendChild(replyBtn);
+      bubbleRow.appendChild(pinBtn);
     }
 
     wrap.appendChild(bubbleRow);
@@ -612,11 +626,84 @@ function setMyOnlineStatus(isOnline) {
     allRoomUsers    = {};
     replyTo         = null;
     teardownTyping();
-
+    if (pinnedMsgUnsubscribe) { pinnedMsgUnsubscribe(); pinnedMsgUnsubscribe = null; }
     window.location.reload();
   };
 
+  // ── PINNED MESSAGE ───────────────────────────────────────────
+  function setupPinnedListener() {
+    if (!rtdb || !currentRoomId) return;
+    const pinnedRef = ref(rtdb, `pinned/${currentRoomId}`);
+    pinnedMsgUnsubscribe = onValue(pinnedRef, snapshot => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        renderPinnedBar(data);
+      } else {
+        clearPinnedBar();
+      }
+    });
+  }
+
+  function renderPinnedBar(data) {
+    const bar      = document.getElementById("pinned-bar");
+    const textEl   = document.getElementById("pinned-text");
+    const authorEl = document.getElementById("pinned-author");
+    if (!bar || !textEl || !authorEl) return;
+
+    pinnedDocId = data.msgId || null;
+
+    const preview = data.text && data.text.length > 80
+      ? data.text.slice(0, 80) + "…" : (data.text || "");
+    textEl.textContent   = preview;
+    authorEl.textContent = data.pinnedBy ? `pinned by ${data.pinnedBy}` : "";
+    bar.classList.add("visible");
+  }
+
+  function clearPinnedBar() {
+    const bar = document.getElementById("pinned-bar");
+    if (bar) bar.classList.remove("visible");
+    pinnedDocId = null;
+  }
+
+  window.pinMessage = async function (msgId, text, username) {
+    if (!currentRoomId || !rtdb) return;
+    try {
+      await set(ref(rtdb, `pinned/${currentRoomId}`), {
+        msgId,
+        text,
+        pinnedBy:  currentUsername,
+        author:    username,
+        pinnedAt:  rtServerTimestamp()
+      });
+      showToast("Message pinned.");
+    } catch (e) {
+      console.error("Pin failed:", e);
+      showToast("Could not pin message.");
+    }
+  };
+
+  window.unpinMessage = async function () {
+    if (!currentRoomId || !rtdb) return;
+    try {
+      await remove(ref(rtdb, `pinned/${currentRoomId}`));
+      showToast("Message unpinned.");
+    } catch (e) {
+      console.error("Unpin failed:", e);
+    }
+  };
+
+  window.scrollToPinnedMsg = function () {
+    if (!pinnedDocId) return;
+    const el = document.getElementById(`msg-${pinnedDocId}`);
+    if (!el) { showToast("Message no longer visible."); return; }
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("msg-highlight");
+    setTimeout(() => el.classList.remove("msg-highlight"), 2000);
+  };
+
 // ── TYPING INDICATOR ─────────────────────────────────────────
+  let pinnedMsgUnsubscribe = null;
+  let pinnedDocId          = null;
   let typingRef        = null;   // ref to this user's typing node in RTDB
   let typingTimeout    = null;   // inactivity timer
   let typingUnsubscribe = null;  // RTDB listener unsubscribe
@@ -1529,6 +1616,111 @@ html, body {
 .credits-divider { color: rgba(255, 255, 255, 0.15); font-size: 10px; }
 body:has(#page-chat.active) .credits-footer { display: none; }
 
+/* PINNED MESSAGE BAR */
+#pinned-bar {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: rgba(0, 180, 255, 0.06);
+  border-bottom: 1px solid rgba(0, 180, 255, 0.2);
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background 0.2s;
+  position: relative;
+  z-index: 8;
+}
+#pinned-bar.visible { display: flex; }
+#pinned-bar:hover { background: rgba(0, 180, 255, 0.1); }
+
+.pinned-bar-indicator {
+  width: 3px;
+  min-height: 32px;
+  background: var(--accent);
+  border-radius: 2px;
+  flex-shrink: 0;
+  box-shadow: 0 0 8px rgba(0,180,255,0.4);
+}
+
+.pinned-bar-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.pinned-bar-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pinned-bar-label {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+
+.pinned-bar-text {
+  font-size: 12px;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pinned-bar-author {
+  font-size: 10px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+}
+
+.pinned-bar-close {
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  transition: color 0.2s, background 0.2s;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pinned-bar-close:hover { color: var(--danger); background: rgba(255,74,106,0.08); }
+
+/* Pin button on messages */
+.msg-pin-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 7px;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.2s, color 0.2s, background 0.2s;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.msg-wrap:hover .msg-pin-btn { opacity: 1; }
+.msg-pin-btn:hover { color: var(--accent); background: rgba(0,180,255,0.1); }
+
+/* Highlight flash when scrolling to pinned message */
+@keyframes msgHighlight {
+  0%   { box-shadow: 0 0 0 2px var(--accent), 0 0 20px rgba(0,180,255,0.3); }
+  100% { box-shadow: none; }
+}
+.msg-highlight .msg-bubble {
+  animation: msgHighlight 2s ease-out forwards;
+}
+
 /* TYPING INDICATOR */
 .typing-indicator-bar {
   padding: 4px 20px;
@@ -1844,6 +2036,24 @@ body:has(#page-chat.active) .credits-footer { display: none; }
     Connected as <span id="chat-username"></span>
   </div>
 
+  <!-- Pinned message bar -->
+  <div id="pinned-bar" onclick="scrollToPinnedMsg()">
+    <div class="pinned-bar-indicator"></div>
+    <svg class="pinned-bar-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2v7"/><path d="M5 9h14"/><path d="M9 9v5a3 3 0 0 0 6 0V9"/><line x1="12" y1="16" x2="12" y2="22"/>
+    </svg>
+    <div class="pinned-bar-content">
+      <div class="pinned-bar-label">Pinned Message</div>
+      <div class="pinned-bar-text" id="pinned-text"></div>
+      <div class="pinned-bar-author" id="pinned-author"></div>
+    </div>
+    <button class="pinned-bar-close" title="Unpin" onclick="event.stopPropagation(); unpinMessage();">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+  </div>
+
   <div id="msg-feed" class="msg-feed">
     <div class="msg-feed-empty" id="empty-state">No messages yet &mdash; say something</div>
   </div>
@@ -1908,7 +2118,3 @@ body:has(#page-chat.active) .credits-footer { display: none; }
 
 </body>
 </html>
-
-
-
-
