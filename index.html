@@ -630,14 +630,13 @@ function setMyOnlineStatus(isOnline) {
     window.location.reload();
   };
 
-  // ── PINNED MESSAGE ───────────────────────────────────────────
+// ── PINNED MESSAGE ───────────────────────────────────────────
   function setupPinnedListener() {
     if (!rtdb || !currentRoomId) return;
     const pinnedRef = ref(rtdb, `pinned/${currentRoomId}`);
     pinnedMsgUnsubscribe = onValue(pinnedRef, snapshot => {
       if (snapshot.exists()) {
-        const data = snapshot.val();
-        renderPinnedBar(data);
+        renderPinnedBar(snapshot.val());
       } else {
         clearPinnedBar();
       }
@@ -652,28 +651,30 @@ function setMyOnlineStatus(isOnline) {
 
     pinnedDocId = data.msgId || null;
 
-    const preview = data.text && data.text.length > 80
-      ? data.text.slice(0, 80) + "…" : (data.text || "");
-    textEl.textContent   = preview;
-    authorEl.textContent = data.pinnedBy ? `pinned by ${data.pinnedBy}` : "";
-    bar.classList.add("visible");
+    textEl.textContent   = data.text
+      ? (data.text.length > 80 ? data.text.slice(0, 80) + "…" : data.text)
+      : "";
+    authorEl.textContent = data.pinnedBy ? "pinned by " + data.pinnedBy : "";
+
+    bar.style.display = "flex";
   }
 
   function clearPinnedBar() {
     const bar = document.getElementById("pinned-bar");
-    if (bar) bar.classList.remove("visible");
+    if (bar) bar.style.display = "none";
     pinnedDocId = null;
   }
 
   window.pinMessage = async function (msgId, text, username) {
     if (!currentRoomId || !rtdb) return;
+    if (!msgId) { showToast("Cannot pin this message."); return; }
     try {
       await set(ref(rtdb, `pinned/${currentRoomId}`), {
-        msgId,
-        text,
-        pinnedBy:  currentUsername,
-        author:    username,
-        pinnedAt:  rtServerTimestamp()
+        msgId    : msgId,
+        text     : text,
+        pinnedBy : currentUsername,
+        author   : username,
+        pinnedAt : rtServerTimestamp()
       });
       showToast("Message pinned.");
     } catch (e) {
@@ -694,7 +695,7 @@ function setMyOnlineStatus(isOnline) {
 
   window.scrollToPinnedMsg = function () {
     if (!pinnedDocId) return;
-    const el = document.getElementById(`msg-${pinnedDocId}`);
+    const el = document.getElementById("msg-" + pinnedDocId);
     if (!el) { showToast("Message no longer visible."); return; }
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     el.classList.add("msg-highlight");
@@ -1622,16 +1623,15 @@ body:has(#page-chat.active) .credits-footer { display: none; }
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
-  background: rgba(0, 180, 255, 0.06);
-  border-bottom: 1px solid rgba(0, 180, 255, 0.2);
+  background: rgba(0, 180, 255, 0.07);
+  border-bottom: 1px solid rgba(0, 180, 255, 0.22);
   flex-shrink: 0;
   cursor: pointer;
   transition: background 0.2s;
-  position: relative;
   z-index: 8;
+  min-height: 44px;
 }
-#pinned-bar.visible { display: flex; }
-#pinned-bar:hover { background: rgba(0, 180, 255, 0.1); }
+#pinned-bar:hover { background: rgba(0, 180, 255, 0.13); }
 
 .pinned-bar-indicator {
   width: 3px;
@@ -1693,6 +1693,33 @@ body:has(#page-chat.active) .credits-footer { display: none; }
   justify-content: center;
 }
 .pinned-bar-close:hover { color: var(--danger); background: rgba(255,74,106,0.08); }
+
+.msg-pin-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 7px;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.2s, color 0.2s, background 0.2s;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.msg-wrap:hover .msg-pin-btn { opacity: 1; }
+.msg-pin-btn:hover { color: var(--accent); background: rgba(0,180,255,0.1); }
+
+@keyframes msgHighlight {
+  0%   { outline: 2px solid var(--accent); background: rgba(0,180,255,0.12); }
+  100% { outline: 2px solid transparent; background: transparent; }
+}
+.msg-highlight .msg-bubble {
+  animation: msgHighlight 2s ease-out forwards;
+  border-radius: 14px;
+}
+
 
 /* Pin button on messages */
 .msg-pin-btn {
@@ -2039,15 +2066,15 @@ body:has(#page-chat.active) .credits-footer { display: none; }
   <!-- Pinned message bar -->
   <div id="pinned-bar" onclick="scrollToPinnedMsg()">
     <div class="pinned-bar-indicator"></div>
-    <svg class="pinned-bar-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 2v7"/><path d="M5 9h14"/><path d="M9 9v5a3 3 0 0 0 6 0V9"/><line x1="12" y1="16" x2="12" y2="22"/>
+    <svg class="pinned-bar-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+      <line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>
     </svg>
     <div class="pinned-bar-content">
-      <div class="pinned-bar-label">Pinned Message</div>
+      <div class="pinned-bar-label">📌 Pinned Message</div>
       <div class="pinned-bar-text" id="pinned-text"></div>
       <div class="pinned-bar-author" id="pinned-author"></div>
     </div>
-    <button class="pinned-bar-close" title="Unpin" onclick="event.stopPropagation(); unpinMessage();">
+    <button class="pinned-bar-close" title="Unpin message" onclick="event.stopPropagation(); unpinMessage();">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
       </svg>
