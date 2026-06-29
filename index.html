@@ -37,6 +37,13 @@
     }
   }
 
+  window.addEventListener("beforeunload", () => {
+    if (presenceRef) {
+      navigator.sendBeacon && navigator.sendBeacon("", "");
+      // onDisconnect already handles RTDB removal
+    }
+  });
+
   await initFirebase();
 
   // ── Simple hash (SHA-256 via SubtleCrypto) ──────────────────
@@ -77,15 +84,6 @@
     connCount: 0,
   };
 
-  async function getUserIP() {
-    try {
-      const r = await fetch("https://api.ipify.org?format=json");
-      const d = await r.json();
-      return d.ip || "unknown";
-    } catch { return "unknown"; }
-  }
-  let cachedIP = "unknown";
-  getUserIP().then(ip => { cachedIP = ip; });
 
   function checkRateLimit() {
     const now = Date.now();
@@ -118,7 +116,7 @@
 
   function checkRoomCreationLimit() {
     const now = Date.now();
-    const ip  = cachedIP;
+    const ip  = "local";
     if (!rateLimitState.roomAttempts[ip]) rateLimitState.roomAttempts[ip] = [];
     rateLimitState.roomAttempts[ip] = rateLimitState.roomAttempts[ip].filter(t => now - t < 60000);
     if (rateLimitState.roomAttempts[ip].length >= 3) return false;
@@ -412,7 +410,7 @@
 
     const msgData = {
       text:      safe,
-      username:  `${currentUsername} (IP - ${cachedIP})`,
+      username:  currentUsername,
       displayName: currentUsername,
       timestamp: serverTimestamp()
     };
@@ -730,31 +728,23 @@ function setMyOnlineStatus(isOnline) {
 
   // ── LEAVE ROOM ───────────────────────────────────────────────
   window.leaveRoom = async function () {
+    await cleanupPresence();
+    showPage("page-landing");
+  };
+
+  async function cleanupPresence() {
     if (unsubMessages) unsubMessages();
     if (unsubPresence) unsubPresence();
-    if (presenceRef)   await remove(presenceRef);
     clearTimeout(inactivityTimer);
     clearTimeout(activityTimer);
-    if (presenceRef) set(presenceRef, { username: currentUsername, online: false, lastSeen: rtServerTimestamp() });
-
-    const panel = document.getElementById("room-info-panel");
-    if (panel) panel.classList.remove("open");
-
-    document.getElementById("msg-feed").innerHTML = "";
-    document.getElementById("chat-room-id-text").textContent = "";
-    document.getElementById("chat-username").textContent     = "";
-    document.getElementById("user-count").textContent        = "0";
-    firstLoad = true;
-
-    currentRoomId   = null;
-    currentUsername = null;
-    roomCreatedAt   = null;
-    allRoomUsers    = {};
-    replyTo         = null;
     teardownTyping();
     if (pinnedMsgUnsubscribe) { pinnedMsgUnsubscribe(); pinnedMsgUnsubscribe = null; }
-    window.location.reload();
-  };
+    if (presenceRef) {
+      onDisconnect(presenceRef).cancel();
+      await remove(presenceRef);
+      presenceRef = null;
+    }
+  }
 
 // ── PINNED MESSAGE ───────────────────────────────────────────
   function setupPinnedListener() {
