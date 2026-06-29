@@ -429,6 +429,7 @@
 
   // ── REPLY HELPERS ────────────────────────────────────────────
   window.setReply = function (username, text) {
+    username = username.replace(/ \(IP - [\d.a-fA-F.:]+\)$/, "");
     replyTo = { username, text };
     const bar       = document.getElementById("reply-bar");
     const nameEl    = document.getElementById("reply-name");
@@ -508,7 +509,8 @@
       quote.className = "msg-quote";
       const quoteName = document.createElement("span");
       quoteName.className = "msg-quote-name";
-      quoteName.textContent = data.replyTo.username === currentUsername ? "You" : data.replyTo.username;
+      const replyDisplayName = data.replyTo.username.replace(/ \(IP - [\d.a-fA-F.:]+\)$/, "");
+      quoteName.textContent = replyDisplayName === currentUsername ? "You" : replyDisplayName;
       const quoteText = document.createElement("span");
       quoteText.className = "msg-quote-text";
       quoteText.textContent = data.replyTo.text.length > 60
